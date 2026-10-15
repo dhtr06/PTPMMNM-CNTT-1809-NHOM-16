@@ -48,7 +48,7 @@ Không đưa .local, mật khẩu hoặc dữ liệu cá nhân thật vào bài 
 
 ## Các bài khác
 
-[Lab01](https://github.com/dhtr06/PTPMMNM-CNTT-1809-NHOM-18/edit/trantrung2006-lab-1) · [Lab02](https://github.com/dhtr06/PTPMMNM-CNTT-1809-NHOM-18/edit/trantrung2006-lab-1) · [Lab03](https://github.com/dhtr06/PTPMMNM-CNTT-1809-NHOM-18/edit/trantrung2006-lab-1) · [Lab04](https://github.com/dhtr06/PTPMMNM-CNTT-1809-NHOM-18/edit/trantrung2006-lab-1) · [Lab05](https://github.com/dhtr06/PTPMMNM-CNTT-1809-NHOM-18/edit/trantrung2006-lab-1)
+[Lab01](https://github.com/dhtr06/PTPMMNM-CNTT-1809-NHOM-18/tree/trantrung2006-lab-1) · [Lab02](https://github.com/dhtr06/PTPMMNM-CNTT-1809-NHOM-18/tree/trantrung2006-lab-1) · [Lab03](https://github.com/dhtr06/PTPMMNM-CNTT-1809-NHOM-18/edit/trantrung2006-lab-1) · [Lab04](https://github.com/dhtr06/PTPMMNM-CNTT-1809-NHOM-18/edit/trantrung2006-lab-1) · [Lab05](https://github.com/dhtr06/PTPMMNM-CNTT-1809-NHOM-18/edit/trantrung2006-lab-1)
 
 Kết quả yêu cầu của phần mẫu: `CHECK_ENV=PASS`. `check` chỉ kiểm tra môi trường. `extend` ở bản khởi đầu còn ca chưa đạt vì TODO; không sửa test để bỏ qua lỗi.
 

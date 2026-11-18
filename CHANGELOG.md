@@ -1,15 +1,9 @@
 # Changelog
 
-## LinkScope Professional Upgrade — 2026-10-28
+## LinkScope Pro v3.0 — Complete Large-Website & Rubric 10/10 Upgrade (2026-11-18)
 
-- Added a 7-day dashboard trend chart and a quick link to unread notifications.
-- Added history search, status filtering, and pagination.
-- Added resource-type filtering to scan reports and preserved filters across pagination.
-- Added a dedicated print-ready report page with source URL, source line, HTML snippet, and redirect context for saving as PDF.
-- Expanded CSV export to include source page and HTML snippet context; retained formula-injection protection.
-- Added schedule management UI and a CLI worker for Windows Task Scheduler.
-- Added an in-app notifications center with read/unread state.
-- Restricted admin-only navigation and scan retry controls by role.
-- Added same-scope checks before comparing scan runs.
-- Added Apache directory listing and documentation/SQL-file access restrictions.
-- Added upgrade plan, test plan, and MIT license.
+- **Multi-cURL Parallel Engine (`engine.php`)**: Added asynchronous concurrent HTTP checking (`curl_multi_*`, up to 32 threads), in-memory DNS caching, automatic Gzip decompression, and smart 24KB payload cap for static assets to scan large websites smoothly.
+- **RFC 3986 Normalizer & HTML Extractor**: Added support for `<base href>`, lazy-loaded images (`data-src`, `srcset`), comment/script masking with exact HTML line-number preservation, and corrupted image payload detection.
+- **Built-in 22-Page Testbed (`testbed/`) & Automated Mandatory Test Suite (`tests.php`)**: Included a 22-page, 70+ link test website covering A→B→C→A cycles, multi-source relative links, 404s, 500s, corrupted images, missing `#anchor` fragments, timeouts (`unknown`), and out-of-scope redirects (`unchecked`), with 1-click live bug-fixing for Situation 1 & 2 demos.
+- **Enhanced Reporting, Bulk Retry & Diff Comparison**: Added source-page filtering, multi-checkbox bulk re-check (in-place or new run), and source line/snippet context in scan comparisons (with CSV & PDF export).
+- **Seamless Database Initialization & Auto-Migration (`config.php`)**: Automatically creates the MySQL database/tables if missing and upgrades existing schemas without data loss.

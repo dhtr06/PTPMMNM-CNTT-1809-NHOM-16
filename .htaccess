@@ -1,4 +1,4 @@
 Options -Indexes
-<FilesMatch "\.(sql|md|log|ini|env)$">
+<FilesMatch "\.(sql|md|log|ini|env|json)$">
   Require all denied
 </FilesMatch>

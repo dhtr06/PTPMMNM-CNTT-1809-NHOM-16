@@ -1,11 +1,237 @@
 <?php
-require 'config.php'; require_admin();if($_SERVER['REQUEST_METHOD']!=='POST')redirect('history.php');verify_csrf();$runId=max(0,(int)($_POST['run_id']??0));$findingId=max(0,(int)($_POST['finding_id']??0));
-$st=$pdo->prepare('SELECT f.*,r.site_id,s.name,s.start_url,s.allowed_domains,s.max_pages,s.max_depth,s.request_timeout,s.max_duration FROM findings f JOIN scan_runs r ON r.id=f.run_id JOIN sites s ON s.id=r.site_id WHERE f.id=? AND f.run_id=?');$st->execute([$findingId,$runId]);$f=$st->fetch();if(!$f){flash('Không tìm thấy kết quả cần kiểm tra lại.','danger');redirect('report.php?run_id='.$runId);}
-$domains=array_map('trim',explode(',',$f['allowed_domains']));$url=$f['base_target_url'];
-function retry_public_host(string $host):bool{if(filter_var($host,FILTER_VALIDATE_IP))return (bool)filter_var($host,FILTER_VALIDATE_IP,FILTER_FLAG_NO_PRIV_RANGE|FILTER_FLAG_NO_RES_RANGE);if($host==='localhost'||str_ends_with($host,'.localhost')||str_ends_with($host,'.local'))return false;$r=@dns_get_record($host,DNS_A|DNS_AAAA);if(!$r)return false;foreach($r as $x){$ip=$x['ip']??$x['ipv6']??'';if($ip!==''&&!filter_var($ip,FILTER_VALIDATE_IP,FILTER_FLAG_NO_PRIV_RANGE|FILTER_FLAG_NO_RES_RANGE))return false;}return true;}
-function retry_normalize(string $base,string $loc):?string{$p=parse_url($base);if(!$p)return null;if(parse_url($loc,PHP_URL_SCHEME))return $loc;if(str_starts_with($loc,'//'))return $p['scheme'].':'.$loc;$origin=$p['scheme'].'://'.$p['host'].(isset($p['port'])?':'.$p['port']:'');if(str_starts_with($loc,'/'))return $origin.$loc;$path=$p['path']??'/';$dir=substr($path,0,(strrpos($path,'/')===false?0:strrpos($path,'/')+1));return $origin.$dir.$loc;}
-function retry_fetch(string $url,array $domains,float $timeout):array{$chain=[];$current=$url;for($i=0;$i<=5;$i++){$p=parse_url($current);$host=strtolower($p['host']??'');if(!$p||!in_array(strtolower($p['scheme']??''),['http','https'],true)||!in_array($host,$domains,true)||!retry_public_host($host))return ['status'=>0,'final'=>$current,'chain'=>implode(' -> ',$chain),'body'=>'','detail'=>'unchecked: URL/redirect ngoài phạm vi an toàn'];$ctx=stream_context_create(['http'=>['method'=>'GET','timeout'=>$timeout,'ignore_errors'=>true,'follow_location'=>0,'max_redirects'=>0,'header'=>"User-Agent: LinkScope/2.0\r\nConnection: close\r\n"],'ssl'=>['verify_peer'=>true,'verify_peer_name'=>true]]);$body=@file_get_contents($current,false,$ctx);$headers=$http_response_header??[];$status=0;$loc='';foreach($headers as $h){if(preg_match('~^HTTP/\S+\s+(\d{3})~i',$h,$m))$status=(int)$m[1];if(stripos($h,'Location:')===0)$loc=trim(substr($h,9));}if($status>=300&&$status<400&&$loc!==''){$chain[]=$current.' ['.$status.']';$current=retry_normalize($current,$loc)??$current;continue;}return ['status'=>$status,'final'=>$current,'chain'=>implode(' -> ',$chain),'body'=>$body===false?'':(string)$body,'detail'=>$status===0?'Timeout hoặc lỗi kết nối':($status>=400?'HTTP '.$status:($status>=300?'Chuyển hướng HTTP '.$status:'Phản hồi thành công'))];}return ['status'=>0,'final'=>$current,'chain'=>implode(' -> ',$chain),'body'=>'','detail'=>'Vượt quá 5 lần chuyển hướng'];}
-$host=strtolower((string)parse_url($url,PHP_URL_HOST));if(!in_array($host,$domains,true)){flash('Không thể thử lại: URL không thuộc domain cho phép.','warning');redirect('report.php?run_id='.$runId);}
-try{$pdo->beginTransaction();$now=date('Y-m-d H:i:s');$st=$pdo->prepare("INSERT INTO scan_runs(site_id,started_at,status) VALUES(?,?,'running')");$st->execute([(int)$f['site_id'],$now]);$newRun=(int)$pdo->lastInsertId();$pdo->commit();$result=retry_fetch($url,$domains,(float)$f['request_timeout']);$status=$result['status'];$category=str_starts_with($result['detail'],'unchecked:')?'unchecked':($status===0?'unknown':($status>=400?'http_error':($status>=300?'redirect':'ok')));if($f['fragment']!==''&&$f['resource_type']==='link'&&$status>=200&&$status<300){$ids=[];if(preg_match_all('~\bid\s*=\s*(["\'])(.*?)\1|\bname\s*=\s*(["\'])(.*?)\3~is',$result['body'],$mm,PREG_SET_ORDER))foreach($mm as $x)$ids[]=$x[2]!==''?$x[2]:($x[4]??'');if(!in_array(rawurldecode($f['fragment']),$ids,true)){$category='missing_anchor';$result['detail']='Không tìm thấy anchor #'.$f['fragment'];}}
-$st=$pdo->prepare('INSERT INTO findings(run_id,normalized_url,base_target_url,fragment,resource_type,status_category,http_status,redirect_chain,error_detail,checked_at) VALUES(?,?,?,?,?,?,?,?,?,?)');$st->execute([$newRun,$result['final'],$f['base_target_url'],$f['fragment'],$f['resource_type'],$category,$status?:null,$result['chain'],substr($result['detail'],0,500),date('Y-m-d H:i:s')]);$isError=in_array($category,['http_error','connection_error','missing_anchor'],true)?1:0;$unchecked=in_array($category,['unknown','unchecked'],true)?1:0;$st=$pdo->prepare("UPDATE scan_runs SET finished_at=?,status='completed',stop_reason=?,total_pages_crawled=0,total_links_found=1,total_errors=?,total_unchecked=? WHERE id=?");$st->execute([date('Y-m-d H:i:s'),'Kiểm tra lại một liên kết', $isError,$unchecked,$newRun]);flash('Đã kiểm tra lại liên kết và lưu thành phiên riêng #'.$newRun.'.');redirect('report.php?run_id='.$newRun);
-}catch(Throwable $e){if($pdo->inTransaction())$pdo->rollBack();error_log('retry finding: '.$e->getMessage());flash('Không thể kiểm tra lại liên kết.','danger');redirect('report.php?run_id='.$runId);}
+declare(strict_types=1);
+require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/engine.php';
+require_admin();
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    redirect('history.php');
+}
+verify_csrf();
+
+$runId = max(0, (int)($_POST['run_id'] ?? 0));
+$retryMode = (string)($_POST['retry_mode'] ?? 'inplace');
+if (!in_array($retryMode, ['inplace', 'new_run'], true)) {
+    $retryMode = 'inplace';
+}
+
+$ids = [];
+if (!empty($_POST['single_finding_id'])) {
+    $ids[] = (int)$_POST['single_finding_id'];
+} elseif (!empty($_POST['finding_id'])) {
+    $ids[] = (int)$_POST['finding_id'];
+} elseif (!empty($_POST['finding_ids']) && is_array($_POST['finding_ids'])) {
+    foreach ($_POST['finding_ids'] as $v) {
+        $iv = (int)$v;
+        if ($iv > 0) {
+            $ids[] = $iv;
+        }
+    }
+}
+$ids = array_values(array_unique($ids));
+
+if (!$runId || !$ids) {
+    flash('Hãy tích chọn ít nhất một mục cần kiểm tra lại.', 'warning');
+    redirect('report.php?run_id=' . $runId);
+}
+
+$stRun = $pdo->prepare('SELECT r.*, s.name, s.start_url, s.allowed_domains, s.request_timeout, s.concurrency, s.allow_subdomains, s.check_external_assets, s.allow_local FROM scan_runs r JOIN sites s ON s.id=r.site_id WHERE r.id=?');
+$stRun->execute([$runId]);
+$runInfo = $stRun->fetch();
+if (!$runInfo) {
+    flash('Không tìm thấy phiên quét gốc.', 'danger');
+    redirect('history.php');
+}
+
+$placeholders = implode(',', array_fill(0, count($ids), '?'));
+$stFindings = $pdo->prepare("SELECT * FROM findings WHERE run_id=? AND id IN ($placeholders)");
+$stFindings->execute(array_merge([$runId], $ids));
+$selectedFindings = $stFindings->fetchAll();
+
+if (!$selectedFindings) {
+    flash('Không tìm thấy các mục cần kiểm tra lại.', 'warning');
+    redirect('report.php?run_id=' . $runId);
+}
+
+$allowSubdomains = !isset($runInfo['allow_subdomains']) || !empty($runInfo['allow_subdomains']);
+$checkExternalAssets = !empty($runInfo['check_external_assets']);
+$allowLocal = !empty($runInfo['allow_local']);
+$timeout = max(1.0, min(30.0, (float)($runInfo['request_timeout'] ?? 4.0)));
+$concurrency = max(1, min(32, (int)($runInfo['concurrency'] ?? 15)));
+$domains = ls_parse_allowed_domains((string)$runInfo['start_url'], (string)$runInfo['allowed_domains'], $allowSubdomains);
+
+// Chuẩn bị batch kiểm tra bằng Multi-cURL
+$batchReq = [];
+foreach ($selectedFindings as $f) {
+    $baseUrl = (string)$f['base_target_url'];
+    $needFull = ((string)$f['fragment'] !== '' && $f['resource_type'] === 'link');
+    $isAsset = in_array($f['resource_type'], ['image', 'resource'], true);
+    if (!isset($batchReq[$baseUrl])) {
+        $batchReq[$baseUrl] = [
+            'url'            => $baseUrl,
+            'need_full_body' => $needFull,
+            'is_asset'       => $isAsset,
+            'resource_type'  => (string)$f['resource_type'],
+        ];
+    } elseif ($needFull) {
+        $batchReq[$baseUrl]['need_full_body'] = true;
+    }
+}
+
+$batchResults = ls_fetch_multi_batch(
+    $batchReq,
+    $domains,
+    $timeout,
+    $concurrency,
+    $allowLocal,
+    $allowSubdomains,
+    $checkExternalAssets
+);
+
+$now = date('Y-m-d H:i:s');
+
+try {
+    $pdo->beginTransaction();
+
+    if ($retryMode === 'new_run') {
+        $stNewRun = $pdo->prepare("INSERT INTO scan_runs(site_id,started_at,status) VALUES(?,?,'running')");
+        $stNewRun->execute([(int)$runInfo['site_id'], $now]);
+        $targetRunId = (int)$pdo->lastInsertId();
+
+        // Tạo 1 bản ghi page đại diện để gắn các links nguồn được giữ lại
+        $stDummyPage = $pdo->prepare('INSERT INTO pages(run_id,url,depth,http_status,title,anchors_list,crawled_at) VALUES(?,?,?,?,?,?,?)');
+        $stDummyPage->execute([$targetRunId, $runInfo['start_url'], 0, 200, 'Kiểm tra lại từ phiên #' . $runId, '[]', $now]);
+        $dummyPageId = (int)$pdo->lastInsertId();
+
+        $stInsertFinding = $pdo->prepare('INSERT INTO findings(run_id,normalized_url,base_target_url,fragment,resource_type,status_category,http_status,redirect_chain,error_detail,checked_at) VALUES(?,?,?,?,?,?,?,?,?,?)');
+        $stCopyLinks = $pdo->prepare('SELECT * FROM links WHERE run_id=? AND (normalized_url=? OR (base_target_url=? AND COALESCE(fragment,"")=?))');
+        $stInsertLink = $pdo->prepare('INSERT INTO links(run_id,source_page_id,source_url,raw_href,normalized_url,base_target_url,fragment,resource_type,line_number,tag_snippet,anchor_text) VALUES(?,?,?,?,?,?,?,?,?,?,?)');
+
+        $errCount = 0;
+        $unchkCount = 0;
+        $linksCopied = 0;
+
+        foreach ($selectedFindings as $f) {
+            $baseUrl = (string)$f['base_target_url'];
+            $frag = (string)($f['fragment'] ?? '');
+            $resType = (string)$f['resource_type'];
+            $res = $batchResults[$baseUrl] ?? null;
+
+            $sc = $res ? (int)$res['status'] : 0;
+            $cat = $res ? (string)$res['category'] : 'unknown';
+            $detail = $res ? (string)$res['error'] : 'Không nhận được phản hồi';
+            $chain = $res ? (string)$res['chain'] : '';
+
+            if ($frag !== '' && $resType === 'link' && $sc >= 200 && $sc < 300 && in_array($cat, ['ok', 'redirect'], true)) {
+                $anchors = $res['anchors'] ?? [];
+                if (!in_array($frag, $anchors, true) && !in_array(rawurldecode($frag), $anchors, true)) {
+                    $cat = 'missing_anchor';
+                    $detail = 'Không tìm thấy mục neo (anchor) #' . $frag . ' trên trang đích';
+                } else {
+                    $detail = 'Phản hồi thành công · Mục neo #' . $frag . ' hợp lệ';
+                }
+            }
+
+            $stInsertFinding->execute([
+                $targetRunId,
+                $f['normalized_url'],
+                $baseUrl,
+                $frag,
+                $resType,
+                $cat,
+                $sc ?: null,
+                substr($chain, 0, 1480),
+                substr($detail, 0, 990),
+                $now,
+            ]);
+
+            if (in_array($cat, ['http_error', 'connection_error', 'missing_anchor'], true)) {
+                $errCount++;
+            } elseif (in_array($cat, ['unknown', 'unchecked'], true)) {
+                $unchkCount++;
+            }
+
+            $stCopyLinks->execute([$runId, $f['normalized_url'], $baseUrl, $frag]);
+            foreach ($stCopyLinks->fetchAll() as $lnk) {
+                $linksCopied++;
+                $stInsertLink->execute([
+                    $targetRunId,
+                    $dummyPageId,
+                    $lnk['source_url'],
+                    $lnk['raw_href'],
+                    $lnk['normalized_url'],
+                    $lnk['base_target_url'],
+                    $lnk['fragment'],
+                    $lnk['resource_type'],
+                    $lnk['line_number'],
+                    $lnk['tag_snippet'],
+                    $lnk['anchor_text'],
+                ]);
+            }
+        }
+
+        $stUpRun = $pdo->prepare("UPDATE scan_runs SET finished_at=?,status='completed',stop_reason=?,total_pages_crawled=1,total_links_found=?,total_errors=?,total_unchecked=? WHERE id=?");
+        $stUpRun->execute([$now, 'Kiểm tra lại ' . count($selectedFindings) . ' mục từ phiên #' . $runId, $linksCopied, $errCount, $unchkCount, $targetRunId]);
+        $pdo->commit();
+
+        flash('Đã kiểm tra lại ' . count($selectedFindings) . ' mục và lưu thành phiên mới #' . $targetRunId . '.');
+        redirect('report.php?run_id=' . $targetRunId);
+    }
+
+    // Chế độ mặc định (inplace): Cập nhật trực tiếp vào phiên hiện tại
+    $stUpdateFinding = $pdo->prepare('UPDATE findings SET status_category=?, http_status=?, redirect_chain=?, error_detail=?, checked_at=? WHERE id=? AND run_id=?');
+    foreach ($selectedFindings as $f) {
+        $baseUrl = (string)$f['base_target_url'];
+        $frag = (string)($f['fragment'] ?? '');
+        $resType = (string)$f['resource_type'];
+        $res = $batchResults[$baseUrl] ?? null;
+
+        $sc = $res ? (int)$res['status'] : 0;
+        $cat = $res ? (string)$res['category'] : 'unknown';
+        $detail = $res ? (string)$res['error'] : 'Không nhận được phản hồi';
+        $chain = $res ? (string)$res['chain'] : '';
+
+        if ($frag !== '' && $resType === 'link' && $sc >= 200 && $sc < 300 && in_array($cat, ['ok', 'redirect'], true)) {
+            $anchors = $res['anchors'] ?? [];
+            if (!in_array($frag, $anchors, true) && !in_array(rawurldecode($frag), $anchors, true)) {
+                $cat = 'missing_anchor';
+                $detail = 'Không tìm thấy mục neo (anchor) #' . $frag . ' trên trang đích';
+            } else {
+                $detail = 'Phản hồi thành công · Mục neo #' . $frag . ' hợp lệ';
+            }
+        }
+
+        $stUpdateFinding->execute([
+            $cat,
+            $sc ?: null,
+            substr($chain, 0, 1480),
+            substr($detail . ' (Đã kiểm tra lại lúc ' . date('H:i:s') . ')', 0, 990),
+            $now,
+            (int)$f['id'],
+            $runId,
+        ]);
+    }
+
+    // Tính lại tổng số lỗi và mục chưa xác định của phiên $runId
+    $stRecountErr = $pdo->prepare("SELECT COUNT(*) FROM findings WHERE run_id=? AND status_category IN ('http_error','connection_error','missing_anchor')");
+    $stRecountErr->execute([$runId]);
+    $newErrTotal = (int)$stRecountErr->fetchColumn();
+
+    $stRecountUnchk = $pdo->prepare("SELECT COUNT(*) FROM findings WHERE run_id=? AND status_category IN ('unknown','unchecked')");
+    $stRecountUnchk->execute([$runId]);
+    $newUnchkTotal = (int)$stRecountUnchk->fetchColumn();
+
+    $stUpRun = $pdo->prepare('UPDATE scan_runs SET total_errors=?, total_unchecked=? WHERE id=?');
+    $stUpRun->execute([$newErrTotal, $newUnchkTotal, $runId]);
+
+    $pdo->commit();
+    flash('Đã kiểm tra lại ' . count($selectedFindings) . ' mục đã chọn và cập nhật trạng thái mới nhất.');
+    redirect('report.php?run_id=' . $runId);
+} catch (Throwable $e) {
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
+    error_log('LinkScope retry error: ' . $e->getMessage());
+    flash('Không thể kiểm tra lại các mục đã chọn: ' . $e->getMessage(), 'danger');
+    redirect('report.php?run_id=' . $runId);
+}

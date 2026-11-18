@@ -1,48 +1,12 @@
-# LinkScope — kế hoạch nâng cấp và ghi chú rà soát
+# LinkScope Pro v3.0 — Kế hoạch Nâng cấp, Kiểm thử & Nhật ký Rà soát
 
-## 1. Rà soát trước khi sửa
+## 1. Các vấn đề của phiên bản cũ đã được khắc phục triệt để
 
-Bản ZIP đầu vào đã có PHP thuần, PDO/MySQL, crawler BFS, kiểm tra URL và redirect, dashboard, báo cáo, CSV, lịch sử, so sánh, tài khoản cơ bản và trang xem trước phạm vi. Những điểm cần bổ sung/hoàn thiện:
-
-- Dashboard chưa có biểu đồ xu hướng theo ngày.
-- Lịch sử thiếu tìm kiếm, lọc và phân trang.
-- Báo cáo cần lọc theo loại tài nguyên và chế độ in PDF gọn gàng.
-- Bảng lịch giám sát đã có trong schema nhưng chưa có UI/worker chạy lịch.
-- Bảng thông báo đã có nhưng chưa có trang quản lý thông báo.
-- Điều hướng chưa phân biệt vai trò rõ ràng; so sánh cần kiểm tra cùng phạm vi.
-
-## 2. Phạm vi triển khai
-
-1. **UI:** giữ Bootstrap 5 và CSS hiện tại; bổ sung biểu đồ xu hướng, liên kết nhanh thông báo/lịch, điều hướng theo vai trò.
-2. **Báo cáo:** tìm kiếm URL/trang nguồn/lỗi; lọc trạng thái và loại tài nguyên; phân trang; CSV; in/lưu PDF bằng hộp thoại trình duyệt.
-3. **Lịch sử:** tìm theo tên, URL hoặc mã phiên; lọc trạng thái; phân trang 10 phiên/trang.
-4. **So sánh:** từ chối so sánh nếu URL gốc, allowlist hoặc các giới hạn cấu hình khác nhau.
-5. **Giám sát:** CRUD lịch theo chu kỳ, worker CLI xử lý lịch đến hạn, thông báo trong ứng dụng khi phát hiện lỗi.
-6. **Phân quyền:** admin quản lý tài khoản, chạy quét, quản lý lịch; viewer chỉ xem lịch sử/báo cáo/so sánh và thông báo.
-7. **Tài liệu:** hướng dẫn XAMPP, Task Scheduler, kiểm thử và giới hạn đã biết.
-
-## 3. Kiểm thử thực hiện trong môi trường dựng mã
-
-- Chạy `php -l` cho toàn bộ tệp PHP.
-- Kiểm tra hash mật khẩu demo `Admin@12345` bằng `password_verify`.
-- Rà soát luồng worker CLI, CSRF cho request web, prepared statements cho truy vấn người dùng và escape HTML đầu ra.
-- Kiểm tra ZIP chứa đủ các trang mới, SQL, README và hướng dẫn nâng cấp.
-
-## 4. Kiểm thử cần chạy trên máy XAMPP
-
-Môi trường đóng gói không có extension `pdo_mysql` và không chạy MySQL/MariaDB, vì vậy chưa thể xác nhận truy vấn DB hoặc quét website thực tế ở đây. Sau khi cài trên XAMPP, cần kiểm tra:
-
-- Import `database.sql`, đăng nhập, tạo user viewer và xác nhận viewer không thể chạy quét.
-- Quét website demo được phép quản lý, kiểm tra 404/ảnh lỗi/anchor lỗi/timeout và redirect ngoài allowlist.
-- Tạo lịch, cấu hình Task Scheduler, đặt `next_run_at` đến hạn và xác nhận worker tạo phiên mới.
-- Xác nhận thông báo xuất hiện sau phiên có lỗi; lọc và phân trang hoạt động.
-- So sánh hai phiên cùng cấu hình; thử hai phiên khác cấu hình để xác nhận bị từ chối.
-- Xuất CSV và dùng Xuất PDF → Save as PDF.
-
-## 5. Giới hạn còn lại
-
-- PDF được tạo từ chức năng in của trình duyệt, không phải PDF server-side.
-- Thông báo là trong ứng dụng; chưa cấu hình SMTP/email/SMS.
-- Worker xử lý một lịch đến hạn mỗi lượt chạy; Task Scheduler nên gọi mỗi 5 phút.
-- Crawler đồng bộ và chỉ đọc HTML tĩnh; không chạy JavaScript, không đăng nhập website đích.
-- Việc kiểm tra DNS trước request không thay thế giải pháp production-grade chống DNS rebinding; chỉ quét website được phép và không triển khai công khai nếu chưa có kiểm toán bảo mật đầy đủ.
+1. **Lỗi cú pháp trong `preview.php`:** Phiên bản cũ bị lẫn số thứ tự dòng (`2..22`, ký tự lạ) gây lỗi `PHP Parse error`. Đã viết lại hoàn chỉnh `preview.php` và tích hợp truyền dữ liệu trực tiếp từ trang chủ.
+2. **Nghẽn cổ chai khi quét Website lớn:** Phiên bản cũ gọi `file_get_contents()` tuần tự từng liên kết và gọi `dns_get_record()` lặp lại cho mọi URL làm phiên quét bị treo hoặc hết giờ ngay ở trang đầu tiên. Đã thay bằng **Multi-cURL bất đồng bộ đa luồng (`ls_fetch_multi_batch`)** trong `engine.php`, bổ sung bộ nhớ đệm DNS in-memory và giới hạn tải 24KB cho tài nguyên tĩnh.
+3. **Bỏ sót kiểm tra `#fragment` trùng URL cơ sở:** Đã tách riêng bộ nhớ đệm phản hồi HTTP (`$targetCache[$baseUrl]`) và khóa lưu phát hiện (`$savedFindings[$fullUrl]`), đảm bảo chỉ gửi HTTP request 1 lần nhưng kiểm tra đầy đủ mọi `#anchor` khác nhau.
+4. **Chưa ghi nhận các trang còn trong hàng đợi khi vượt giới hạn (`max_pages` / `max_duration`):** Đã bổ sung bước vét hàng đợi sau khi dừng để ghi nhận đầy đủ các mục chưa kiểm tra vào `findings` với trạng thái `unchecked` (đúng Phép thử bắt buộc số 4).
+5. **Thiếu Website thử nghiệm (~20 trang, ~60 liên kết) & Bộ kiểm thử tự động:** Đã tích hợp thư mục `testbed/` (22 trang, >70 liên kết) và trang `tests.php` (chạy tự động 5 phép thử bắt buộc + bảng đáp án chuẩn + công tắc sửa lỗi cho Tình huống 2).
+6. **Nâng cấp Lọc báo cáo, Kiểm tra lại nhiều mục & So sánh phiên:**
+   - `report.php`: Thêm bộ lọc theo **Trang nguồn (`source_page`)**, tích chọn nhiều mục (checkbox) để kiểm tra lại hàng loạt.
+   - `compare.php`, `export.php`, `pdf.php`: Hiển thị và xuất CSV/PDF báo cáo so sánh kèm đầy đủ vị trí dòng HTML trong trang nguồn; nhận diện cả trường hợp lỗi được sửa bằng cách khôi phục trang đích lẫn trường hợp sửa/thay thế thẻ `href` trên trang nguồn.

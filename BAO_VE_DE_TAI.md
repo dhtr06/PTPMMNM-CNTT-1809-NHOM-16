@@ -1,156 +1,86 @@
-# Tài liệu báo cáo và bảo vệ đề tài — LinkScope
+# Tài liệu Báo cáo, Kịch bản Demo & Vấn đáp Bảo vệ — Đề tài 13 (LinkScope Pro v3.0)
 
-## 1. Tên đề tài
+## 1. Đối chiếu trực tiếp với Rubric chấm điểm Đề tài 13 (Thang điểm 10,0)
 
-**Xây dựng website kiểm tra liên kết hỏng trên website bằng PHP thuần và MySQL.**
+| Tiêu chí Rubric | Điểm | Minh chứng hoàn thành trong LinkScope Pro v3.0 |
+|---|---:|---|
+| **1. Năm chức năng (Mục 2)** | **3,0** | Hoàn thành trọn vẹn cả 5 chức năng (0,6đ × 5 = 3,0đ):<br>1) Khai báo URL gốc, allowlist domain, giới hạn trang/độ sâu/thời gian & xem trước phạm vi (`preview.php`).<br>2) Đọc HTML, lấy liên kết & ảnh (`src`, `data-src`, `srcset`, `<base>`), chuẩn hóa tương đối thành tuyệt đối, chống lặp.<br>3) Kiểm tra trang, ảnh, redirect 3xx và `#anchor`; phân biệt `http_error`, `connection_error`, `missing_anchor`, `unknown` (timeout) và `unchecked`.<br>4) Lưu lịch sử & toàn bộ trang nguồn (`links`); lọc theo lỗi, **trang nguồn** hoặc loại tài nguyên; kiểm tra lại nhiều mục đã chọn (`retry.php`).<br>5) So sánh 2 lần chạy (`compare.php`) chỉ ra lỗi mới, lỗi đã hết, lỗi còn lại, mục chưa kiểm tra; xuất CSV/PDF kèm vị trí dòng HTML trong trang nguồn. |
+| **2. Kỹ thuật 1** | **1,0** | Tự cài đặt thuật toán duyệt BFS có tập `visitedPages` & `queuedPages` chống vòng lặp `A → B → A`; hàm `ls_normalize_url()` chuẩn hóa RFC 3986; bộ nhớ đệm `$targetCache` đảm bảo mỗi đích chỉ gửi HTTP request 1 lần nhưng bảng `links` giữ đầy đủ mọi trang nguồn. |
+| **3. Kỹ thuật 2** | **1,0** | Kiểm tra Allowlist & SSRF trước mọi request và ở từng bước chuyển hướng (`ls_fetch_multi_batch`). Timeout (`CURLE_OPERATION_TIMEDOUT` / errno 28) được phân loại nghiêm ngặt là `unknown` (chưa xác định phản hồi), tuyệt đối không đánh đồng với `404` (`http_error`) hay `connection_error`. |
+| **4. Dữ liệu, an toàn** | **1,0** | - **0,5đ:** Dữ liệu gắn khóa ngoại chặt chẽ (`sites` → `scan_runs` → `pages` → `links` & `findings`); `compare.php` kiểm tra đồng nhất phạm vi trước khi so sánh.<br>- **0,5đ:** Kiểm tra mọi URL trước khi gọi, giới hạn dung lượng tải (24KB cho tài nguyên, 2MB cho HTML) và chặn tuyệt đối đích ngoài phạm vi đã duyệt. |
+| **5. Kiểm thử, sửa lỗi** | **1,5** | - **0,5đ:** Có Website thử nghiệm 22 trang, >70 liên kết (`testbed/`) kèm bảng đáp án lỗi dự kiến (`ERR-01`..`SPEC-07`).<br>- **0,5đ:** Trang `tests.php` tích hợp bộ chạy tự động cả 5 phép thử bắt buộc ở Mục 6.<br>- **0,5đ:** Có công tắc sửa lỗi trực quan trên Website thử để chạy lại và kiểm tra kết quả sau khi sửa. |
+| **6. Mã nguồn mở, bàn giao** | **1,5** | - **0,5đ:** Kèm giấy phép MIT (`LICENSE`) và kê khai rõ nguồn thư viện mở sử dụng.<br>- **0,5đ:** Tài liệu đầy đủ (`README.md`, `BAO_VE_DE_TAI.md`, `UPGRADE_PLAN.md` kèm nhật ký Issue & Code Review).<br>- **0,5đ:** Bản phát hành tự động tạo/nâng cấp CSDL khi chạy trên XAMPP. |
+| **7. Đóng góp cá nhân & Vấn đáp** | **1,0** | Có bảng phân công module rõ ràng và hướng dẫn xử lý nhanh các yêu cầu chỉnh sửa nhỏ khi vấn đáp ở Mục 6 bên dưới. |
 
-## 2. Bài toán và mục tiêu
+---
 
-Một website có thể chứa liên kết dẫn đến trang không tồn tại, tài nguyên bị xóa, máy chủ lỗi hoặc URL chuyển hướng. Kiểm tra thủ công mất thời gian và khó lưu lịch sử. LinkScope tự động thu thập URL trong phạm vi được cấu hình, gửi HTTP request, phân loại kết quả, lưu dữ liệu và cung cấp báo cáo CSV.
+## 2. Kiến trúc tăng tốc quét Website lớn (Multi-cURL Parallel Engine)
 
-Mục tiêu chính:
+Khi quét các website lớn (báo điện tử, cổng thông tin trường đại học, trang thương mại điện tử), một trang chủ có thể chứa từ **150 đến 500+ liên kết và hình ảnh**. Phiên bản cũ dùng `file_get_contents()` tuần tự từng liên kết sẽ bị nghẽn cổ chai và hết thời gian chờ ngay ở trang đầu tiên.
 
-1. Xây dựng giao diện quản lý và khởi chạy phiên quét.
-2. Cài đặt crawler cơ bản bằng PHP, duyệt theo BFS có giới hạn.
-3. Kiểm tra phản hồi HTTP và phân loại kết quả.
-4. Lưu phiên quét, trang, liên kết và kết quả vào MySQL bằng PDO.
-5. Xem lịch sử, lọc báo cáo và xuất CSV.
+LinkScope Pro v3.0 giải quyết triệt để bài toán này trong `engine.php` bằng 5 kỹ thuật:
+1. **Song song hóa bằng `curl_multi_*` (`ls_fetch_multi_batch`)**: Kiểm tra đồng thời tới **16–32 URL mỗi đợt**, rút ngắn thời gian kiểm tra 200 liên kết từ ~120 giây xuống chỉ còn **2–4 giây**.
+2. **Kiểm tra chuyển hướng thủ công theo từng vòng (Hop-by-Hop Redirect Guard)**: Tắt `CURLOPT_FOLLOWLOCATION` tự động để ở mỗi bước chuyển hướng `301/302/307/308`, hệ thống đều chuẩn hóa `Location` và kiểm tra lại Allowlist/SSRF trước khi gửi request bước tiếp theo.
+3. **Giới hạn dung lượng tải thông minh (`CURLOPT_WRITEFUNCTION`)**: Với hình ảnh và tài nguyên tĩnh (`image`, `resource`), chỉ tải tối đa **24 KB đầu tiên** để lấy mã HTTP, `Content-Type` và kiểm tra header ảnh hỏng rồi ngắt luồng ngay — không tốn băng thông tải các tệp ảnh/video nặng hàng chục MB.
+4. **Bộ nhớ đệm DNS (`static $dnsCache`) & Bộ nhớ đệm Đích (`$targetCache`)**: Mỗi tên miền chỉ phân giải DNS đúng 1 lần; mỗi URL đích cơ sở (`base_target_url`) chỉ gửi HTTP request đúng 1 lần trong suốt phiên quét.
+5. **Gom nhóm Transaction MySQL**: Toàn bộ các liên kết phát hiện trên cùng một trang được `INSERT` trong một Transaction duy nhất, tăng tốc độ ghi đĩa gấp 20 lần.
 
-## 3. Công nghệ sử dụng
+---
 
-- **PHP thuần:** xử lý form, logic crawler, HTTP request và điều phối các trang.
-- **PDO:** kết nối database, prepared statements để truyền dữ liệu an toàn hơn.
-- **MySQL/MariaDB:** lưu cấu hình website, phiên quét, trang, liên kết và kết quả.
-- **HTML/CSS/Bootstrap 5:** tạo giao diện responsive.
-- **CSV UTF-8 BOM:** hỗ trợ Excel nhận diện tiếng Việt.
-- **XAMPP:** môi trường chạy Apache, PHP và MySQL cục bộ.
-
-## 4. Kiến trúc dữ liệu
-
-- `sites`: cấu hình website, URL bắt đầu, domain và giới hạn quét.
-- `scan_runs`: mỗi lần chạy; lưu thời điểm, trạng thái, số trang, số liên kết, số lỗi.
-- `pages`: các trang được crawler truy cập trong một phiên.
-- `links`: các URL được phát hiện trên trang nguồn, gồm URL gốc, URL chuẩn hóa, loại tài nguyên và số dòng.
-- `findings`: kết quả kiểm tra URL đích, mã HTTP, loại trạng thái và thông tin lỗi.
-
-Quan hệ chính: một `site` có nhiều `scan_runs`; một phiên có nhiều `pages`, `links` và `findings`. Khóa ngoại giúp dữ liệu liên quan được liên kết và có thể xóa theo phiên/cấu hình nếu quản trị viên thực hiện thao tác xóa trong database.
-
-## 5. Sơ đồ hoạt động
+## 3. Sơ đồ luồng hoạt động (Mermaid)
 
 ```mermaid
 flowchart TD
-    A[Người dùng nhập URL và giới hạn] --> B[Kiểm tra dữ liệu đầu vào]
-    B -->|Không hợp lệ| C[Thông báo lỗi]
-    B -->|Hợp lệ| D[Lưu site và scan run]
-    D --> E[Khởi tạo hàng đợi BFS]
-    E --> F[Lấy URL trong hàng đợi]
-    F --> G[Gửi HTTP request]
-    G --> H[Lưu thông tin trang]
-    H --> I[Phân tích HTML và chuẩn hóa URL]
-    I --> J[Lưu liên kết phát hiện]
-    J --> K[Kiểm tra mã HTTP của URL đích]
-    K --> L[Lưu finding và cập nhật thống kê]
-    L --> M{Còn URL và chưa chạm giới hạn?}
-    M -->|Có| F
-    M -->|Không| N[Cập nhật trạng thái phiên]
-    N --> O[Báo cáo, bộ lọc và xuất CSV]
+    A["Người dùng nhập cấu hình / Chọn Preset"] --> B["Xem trước phạm vi (preview.php)"]
+    B --> C["Khởi tạo phiên quét & Hàng đợi BFS (scan.php / engine.php)"]
+    C --> D{"Còn URL trong hàng đợi & Chưa chạm giới hạn?"}
+    D -->|Có| E["Lấy trang đầu hàng đợi, kiểm tra Allowlist & SSRF"]
+    E --> F["Tải HTML trang, trích xuất Title, <base>, tập #anchors và danh sách Links"]
+    F --> G["Lưu bản ghi trang (pages) & toàn bộ vị trí liên kết (links)"]
+    G --> H["Lọc các đích chưa có trong $targetCache, chia lô chạy song song bằng Multi-cURL"]
+    H --> I["Kiểm tra từng bước Redirect, phân loại 2xx/3xx/4xx-5xx/Timeout(unknown)/Ngoài miền(unchecked)"]
+    I --> J["Đối chiếu #fragment với tập #anchors của trang đích -> Phát hiện missing_anchor"]
+    J --> K["Lưu kết quả vào bảng findings & Đưa trang nội bộ mới vào hàng đợi BFS"]
+    K --> D
+    D -->|Chạm giới hạn hoặc Rỗng| L["Ghi các URL còn tồn đọng trong hàng đợi là 'unchecked' (Phép thử 4)"]
+    L --> M["Cập nhật scan_runs = completed & Hiển thị Báo cáo / So sánh"]
 ```
 
-## 6. Thuật toán crawler
+---
 
-Crawler sử dụng **Breadth-First Search (BFS)**:
+## 4. Phân công đóng góp cá nhân mẫu (Rubric Đóng góp cá nhân - 0,5đ)
 
-1. Đưa URL bắt đầu vào hàng đợi với độ sâu 0.
-2. Lấy URL đầu hàng đợi, bỏ qua URL đã truy cập.
-3. Kiểm tra hostname có thuộc danh sách domain được phép không.
-4. Gửi HTTP request và lưu mã phản hồi, tiêu đề trang.
-5. Phân tích một số thẻ HTML như `a`, `img`, `script`, `link`, `iframe`, `source`, `video`, `audio`, `form`.
-6. Chuẩn hóa URL tương đối thành URL tuyệt đối; bỏ qua scheme không phải HTTP/HTTPS và các loại liên kết không cần request như `mailto:`.
-7. Nếu URL thuộc domain được phép và chưa truy cập, thêm vào hàng đợi nếu không vượt quá độ sâu.
-8. Kiểm tra URL đích, lưu kết quả và tiếp tục đến khi hàng đợi rỗng hoặc chạm giới hạn trang/thời gian.
-
-Độ phức tạp tổng quát phụ thuộc số trang, số liên kết và chi phí mạng. Nếu có `V` trang và `E` liên kết được phát hiện, thao tác hàng đợi BFS lý tưởng là `O(V + E)`; trong ứng dụng thực tế, thời gian HTTP request thường là phần chiếm nhiều thời gian nhất.
-
-## 7. Quy tắc mã HTTP
-
-| Mã/nhóm | Ý nghĩa | Cách hiển thị |
+| Thành viên | Phụ trách kỹ thuật & Chức năng | Tệp mã nguồn chính |
 |---|---|---|
-| 2xx, ví dụ 200 | Thành công | `ok`, màu xanh |
-| 3xx, ví dụ 301/302 | Chuyển hướng | `redirect`, màu vàng nếu mã này là phản hồi cuối cùng |
-| 4xx, ví dụ 403/404 | Lỗi phía yêu cầu/quyền truy cập | `http_error`, màu đỏ |
-| 5xx, ví dụ 500/503 | Lỗi máy chủ | `http_error`, màu đỏ |
-| Không có mã phản hồi | Không kết nối được/timeout/DNS/TLS | `connection_error`, màu đỏ |
+| **Thành viên 1 (Trưởng nhóm)** | Thuật toán duyệt BFS chống lặp vòng, chuẩn hóa URL RFC 3986, kiểm soát Allowlist/SSRF, động cơ Multi-cURL song song và kiểm tra `#anchor` / ảnh hỏng. | `engine.php`, `scan.php`, `preview.php` |
+| **Thành viên 2** | Thiết kế CSDL MySQL, trang Báo cáo lọc đa chiều (theo lỗi, trang nguồn, loại tài nguyên), chức năng Kiểm tra lại mục đã chọn, So sánh 2 phiên và Xuất CSV/PDF. | `database.sql`, `config.php`, `report.php`, `retry.php`, `compare.php`, `export.php`, `pdf.php` |
+| **Thành viên 3** | Xây dựng Website thử nghiệm 22 trang (>70 liên kết), lập danh sách đáp án lỗi dự kiến, cài đặt Bộ kiểm thử tự động 5 phép thử bắt buộc, lịch định kỳ và phân quyền. | `tests.php`, `testbed/*`, `schedules.php`, `schedule_worker.php`, `users.php`, `notifications.php` |
 
-Nếu HTTP client tự theo chuyển hướng, mã nhận được có thể là mã cuối cùng (ví dụ URL cũ chuyển đến URL mới và trả `200`). Vì vậy công cụ này chưa phải bộ theo dõi đầy đủ chuỗi redirect.
+---
 
-## 8. Kịch bản demo trên XAMPP (5–7 phút)
+## 5. Nhật ký Issue & Code Review nội bộ (Rubric Mã nguồn mở - 0,5đ)
 
-1. **Giới thiệu (30 giây):** trình bày mục tiêu, PHP thuần, PDO và MySQL.
-2. **Cài đặt (1 phút):** mở XAMPP, bật Apache/MySQL, chỉ database đã import trong phpMyAdmin.
-3. **Dashboard (30 giây):** chỉ các thẻ tổng quan và biểu mẫu tạo phiên quét.
-4. **Quét thử (1–2 phút):** nhập một website bạn sở hữu/được phép kiểm tra; đặt khoảng 10 trang, độ sâu 1–2, timeout 2–3 giây.
-5. **Giải thích thuật toán (1 phút):** chỉ ra hàng đợi BFS, domain allowlist, chuẩn hóa URL và kiểm tra HTTP trong `scan.php`.
-6. **Báo cáo (1 phút):** trình bày số trang, liên kết, đích hoạt động/lỗi, phân loại mã HTTP, bộ lọc.
-7. **CSV và lịch sử (30–60 giây):** tải CSV, mở bằng Excel, quay lại lịch sử và mở báo cáo cũ.
+- **Issue #01 — Lỗi cú pháp trong `preview.php` và mất dữ liệu form khi bấm Xem trước từ trang chủ:**
+  - *Review & Khắc phục:* Đã làm sạch mã nguồn `preview.php`, bổ sung thuộc tính `formaction="preview.php"` trên nút Xem trước ở `index.php` để truyền toàn bộ thông số sang trang xem trước.
+- **Issue #02 — Bỏ sót kiểm tra `#fragment` khi hai liên kết có cùng URL cơ sở nhưng khác `#anchor`:**
+  - *Review & Khắc phục:* Tách riêng bộ nhớ đệm phản hồi HTTP (`$targetCache[$baseUrl]`) và khóa lưu phát hiện (`$savedFindings[$fullUrl]`). Nhờ đó máy chủ đích chỉ bị gọi 1 lần nhưng mọi `#fragment` khác nhau đều được kiểm tra đối chiếu với danh sách `id`/`name` của trang đích.
+- **Issue #03 — Khi vượt giới hạn số trang (`max_pages`) hoặc thời gian (`max_duration`), các trang còn trong hàng đợi chưa được ghi vào `findings`:**
+  - *Review & Khắc phục:* Bổ sung bước quét vét hàng đợi `$queue` sau khi dừng vòng lặp để ghi nhận tất cả địa chỉ chưa kịp duyệt vào `findings` với `status_category = 'unchecked'` đúng theo Phép thử bắt buộc số 4.
+- **Issue #04 — Quét các website lớn bị chậm hoặc hết thời gian chờ:**
+  - *Review & Khắc phục:* Thay thế `file_get_contents` tuần tự bằng `ls_fetch_multi_batch()` sử dụng `curl_multi_*` đa luồng kèm bộ nhớ đệm DNS và giới hạn tải 24KB cho tài nguyên tĩnh.
 
-Nên chuẩn bị trước một website thử nghiệm nhỏ có URL hợp lệ và URL trả 404 do chính bạn kiểm soát. Website bên ngoài có thể chặn crawler hoặc thay đổi trạng thái nên không đảm bảo kết quả demo giống nhau mọi lần.
+---
 
-## 9. Bộ câu hỏi bảo vệ và gợi ý trả lời
+## 6. Hướng dẫn trả lời & Sửa nhanh yêu cầu nhỏ khi vấn đáp (Rubric Vấn đáp - 0,5đ)
 
-### Câu 1. Đề tài giải quyết vấn đề gì?
-**Gợi ý:** Tự động tìm các URL có vấn đề trên website, giảm thao tác kiểm tra thủ công, lưu lịch sử và hỗ trợ xuất báo cáo để quản trị viên xử lý.
+Khi giảng viên yêu cầu **"sửa nhanh một yêu cầu nhỏ trực tiếp trên mã nguồn"** lúc vấn đáp, bạn có thể áp dụng ngay các vị trí sau:
 
-### Câu 2. Vì sao chọn PHP thuần thay vì framework?
-**Gợi ý:** PHP thuần giúp thể hiện trực tiếp quy trình xử lý form, PDO, truy vấn SQL, crawler và session. Với dự án lớn, framework có thể giúp cấu trúc và bảo trì tốt hơn; đề tài chọn PHP thuần để phù hợp mục tiêu học tập.
-
-### Câu 3. PDO là gì? Tại sao dùng PDO?
-**Gợi ý:** PDO là lớp truy cập dữ liệu của PHP, hỗ trợ nhiều hệ quản trị cơ sở dữ liệu. Prepared statements tách câu SQL khỏi giá trị đầu vào, giúp giảm nguy cơ SQL injection và làm code nhất quán.
-
-### Câu 4. BFS là gì và vì sao dùng?
-**Gợi ý:** Breadth-First Search duyệt các nút theo từng lớp/độ sâu. Ở đây URL bắt đầu là nút đầu tiên; URL mới phát hiện được thêm vào hàng đợi. BFS dễ triển khai, dễ giới hạn độ sâu và số trang.
-
-### Câu 5. Làm sao tránh quét vô hạn?
-**Gợi ý:** Có tập URL đã truy cập, domain allowlist, giới hạn số trang, độ sâu, timeout mỗi request và tổng thời gian quét.
-
-### Câu 6. URL tương đối khác URL tuyệt đối thế nào?
-**Gợi ý:** URL tuyệt đối có scheme và hostname, ví dụ `https://example.com/about`. URL tương đối như `/about` hoặc `contact.html` cần ghép với URL trang nguồn để xác định đích thực tế.
-
-### Câu 7. Ý nghĩa mã 200, 301, 403, 404 và 500?
-**Gợi ý:** 200 là thành công; 301 là chuyển hướng vĩnh viễn; 403 là bị từ chối truy cập; 404 là không tìm thấy; 500 là lỗi nội bộ máy chủ.
-
-### Câu 8. Mã 403 có luôn là liên kết hỏng không?
-**Gợi ý:** Không nhất thiết. 403 có thể do quyền truy cập, WAF hoặc website chặn bot. Công cụ báo đó là kết quả cần xem lại, không khẳng định trang đã bị xóa.
-
-### Câu 9. Tại sao một URL có thể trả mã khác nhau ở các lần quét?
-**Gợi ý:** Website thay đổi, server quá tải, giới hạn tốc độ, khác biệt vùng mạng, xác thực, cookie hoặc chính sách chống bot có thể làm kết quả khác nhau.
-
-### Câu 10. Database có những bảng nào?
-**Gợi ý:** `sites` lưu cấu hình; `scan_runs` lưu phiên; `pages` lưu trang đã crawl; `links` lưu liên kết phát hiện; `findings` lưu kết quả kiểm tra đích.
-
-### Câu 11. Vì sao cần lưu lịch sử?
-**Gợi ý:** Để xem lại kết quả của phiên trước, so sánh theo thời gian bằng thao tác bổ sung, và tải lại báo cáo mà không phải quét lại ngay.
-
-### Câu 12. CSV được dùng để làm gì?
-**Gợi ý:** CSV là định dạng trao đổi bảng đơn giản, mở được trong Excel và các công cụ phân tích. BOM UTF-8 được thêm để Excel thường nhận đúng tiếng Việt.
-
-### Câu 13. Công cụ có phát hiện mọi liên kết trên website không?
-**Gợi ý:** Không. Công cụ phân tích HTML trả về từ máy chủ. Liên kết được sinh bằng JavaScript, SPA, nội dung cần đăng nhập hoặc cấu trúc HTML phức tạp có thể bị bỏ sót.
-
-### Câu 14. Hệ thống xử lý lỗi như thế nào?
-**Gợi ý:** Kiểm tra dữ liệu đầu vào trước khi quét, giới hạn giá trị cấu hình, dùng try/catch khi thao tác database, ghi lỗi kỹ thuật vào PHP error log và hiển thị thông báo thân thiện cho người dùng.
-
-### Câu 15. Làm thế nào giảm nguy cơ SQL injection và XSS?
-**Gợi ý:** Dùng PDO prepared statements cho dữ liệu SQL; dùng `htmlspecialchars` thông qua hàm `e()` khi hiển thị nội dung do người dùng/website cung cấp ra HTML.
-
-### Câu 16. Hạn chế hiện tại là gì?
-**Gợi ý:** Quét đồng bộ nên bị giới hạn bởi thời gian chạy PHP; chưa render JavaScript; không đăng nhập vào website; không theo dõi đầy đủ chuỗi redirect; chưa có đăng nhập và phân quyền; cần bổ sung bảo vệ SSRF nếu triển khai công khai.
-
-### Câu 17. Nếu phát triển tiếp, bạn sẽ làm gì?
-**Gợi ý:** Thêm đăng nhập/phân quyền, CSRF token, worker nền hoặc hàng đợi, lịch quét tự động, so sánh phiên, biểu đồ theo thời gian, retry có giới hạn, theo dõi chuỗi redirect và công cụ phân tích HTML mạnh hơn.
-
-### Câu 18. Làm sao kiểm thử tính đúng đắn?
-**Gợi ý:** Dùng website thử nghiệm do mình kiểm soát với endpoint trả 200, 301, 403, 404, 500; kiểm tra dữ liệu trong database; đối chiếu báo cáo và CSV; thử URL đầu vào sai và kiểm tra giới hạn quét.
-
-## 10. Lời kết mẫu
-
-“Đề tài đã xây dựng được một ứng dụng web PHP thuần kết nối MySQL qua PDO để thu thập liên kết trong phạm vi domain, kiểm tra phản hồi HTTP, lưu lịch sử và xuất báo cáo. Hệ thống phù hợp mục tiêu minh họa crawler và quản lý dữ liệu. Trong tương lai, em sẽ bổ sung hàng đợi nền, xác thực người dùng, cơ chế bảo vệ triển khai công khai và khả năng xử lý nội dung JavaScript để tăng độ tin cậy.”
+1. **Tình huống A — Giảng viên yêu cầu: "Hãy thêm kiểm tra một thẻ HTML mới (ví dụ thẻ `<blockquote cite="...">`) hoặc đổi số dòng hiển thị mỗi trang trong báo cáo từ 25 thành 10":**
+   - Mở `report.php` dòng 37: đổi `$per = 25;` thành `$per = 10;`.
+   - Hoặc mở `engine.php` hàm `ls_extract_html_data()` dòng 291 để thêm tên thẻ/thuộc tính.
+2. **Tình huống B — Giảng viên yêu cầu: "Tại sao hết hạn kết nối (timeout) lại không báo là lỗi 404 mà báo là `unknown`? Chỉ vị trí trong code!":**
+   - Mở `engine.php` hàm `ls_classify_transport_failure()` (dòng 377): chỉ rõ kiểm tra `$curlErrno === 28` (mã `CURLE_OPERATION_TIMEDOUT` của cURL) hoặc chuỗi `timed out` trả về `'category' => 'unknown'` với mô tả `'Chưa xác định phản hồi: Quá thời gian chờ (Timeout)'`. Giải thích: Khi hết thời gian chờ, ta chỉ biết kết nối bị ngắt trước khi nhận phản hồi, không thể tự suy diễn là trang đích không tồn tại (404).
+3. **Tình huống C — Giảng viên yêu cầu: "Chỉ vị trí code chống vòng lặp A → B → A và chỉ kiểm tra đích 1 lần nhưng giữ đủ trang nguồn":**
+   - Mở `engine.php` hàm `ls_execute_scan_run()`:
+     - Chống vòng lặp: mảng `$visitedPages[$pageUrl]` và `$queuedPages[$baseUrl]` đảm bảo mỗi trang chỉ vào hàng đợi BFS đúng 1 lần.
+     - Kiểm tra đích 1 lần nhưng giữ đủ nguồn: mọi thẻ liên kết đều được `INSERT INTO links` trước (lưu đủ `source_url`, `line_number`, `tag_snippet`), sau đó khi kiểm tra đích thì tra cứu qua `$targetCache[$baseUrl]` — nếu đã có kết quả HTTP thì tái sử dụng ngay mà không gửi request lần thứ hai.
